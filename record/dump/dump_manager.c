@@ -21,6 +21,8 @@
 #include "../lib/block_manager.h"
 #include "../lib/block_filter.h"
 
+#include "../led/led.h"
+
 #ifdef __x86_64
 const char NAME_PREFIX[] = "sdb"; //模拟机
 #else
@@ -137,7 +139,7 @@ static void wait_usb_plugin(struct dump_manager *manager) {
 static int mount_usb(struct dump_manager *manager) {
 	char * device = manager->device_name;
 	//返回0。失败返回-1
-	int ret = mount(device, MOUNT_POINT, "vfat", MS_SYNCHRONOUS,NULL);
+	int ret = mount(device, MOUNT_POINT, "vfat", 0,NULL);
 	return ret;
 }
 
@@ -259,6 +261,7 @@ void * dump_proc(void * args) {
 		unmount_usb();
 		if (mount_usb(manager) == 0) {
 
+			change_led_mode(LED_DUMP);
 			get_config_info(manager);
 
 			dump_status_data(manager);
@@ -267,6 +270,7 @@ void * dump_proc(void * args) {
 
 			unmount_usb();
 			printf("dump OK!\n");
+			change_led_mode(LED_NORMAL);
 		}
 
 	}
@@ -296,7 +300,7 @@ struct dump_manager* get_dump_manager() {
 			memset(gpdump_manager, 0, sizeof(struct dump_manager));
 
 			add_block_filter(&(gpdump_manager->manager), NULL,
-					sizeof(struct dump), 2);
+					sizeof(struct dump), 8);
 
 			get_record_id(gpdump_manager);
 			pthread_create(&(gpdump_manager->thread_dump), NULL, dump_proc,

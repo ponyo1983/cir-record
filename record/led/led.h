@@ -9,6 +9,12 @@
 #define LED_H_
 
 
+enum led_mode
+{
+	LED_NORMAL=0,
+	LED_DUMP=1,
+};
+
 struct led
 {
 	int led_no;//编号
@@ -20,5 +26,6 @@ struct led
 
 
 void light_on(int no);
+void change_led_mode (enum led_mode mode);
 
 #endif /* LED_H_ */

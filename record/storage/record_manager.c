@@ -372,6 +372,7 @@ struct record_manager* get_record_manager() {
 		gpmanager = malloc(sizeof(struct record_manager));
 
 		if (gpmanager != NULL) {
+			memset(gpmanager,0,sizeof(struct record_manager));
 			add_block_filter(&(gpmanager->manager), NULL, sizeof(struct record),
 					20);
 			gpmanager->file = NULL;

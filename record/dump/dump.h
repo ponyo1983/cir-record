@@ -8,7 +8,7 @@
 #ifndef DUMP_H_
 #define DUMP_H_
 
-#define DUMP_SIZE	(2*1024*1024)
+#define DUMP_SIZE	(512*1024)
 
 enum dump_type
 {
