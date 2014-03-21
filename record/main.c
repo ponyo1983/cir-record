@@ -18,6 +18,9 @@
 
 #include "storage/record_dic.h"
 
+#include "led/led.h"
+#include "sound/sound.h"
+
 extern void start_serial();
 extern void start_record();
 extern void start_dump();
@@ -26,17 +29,22 @@ int main(int argc, char **argv) {
 
 #ifdef __x86_64
 
+
+
 	init_led();
 
 	start_serial(); //开启串口
 	start_record(); //开启记录
 	start_dump(); //开启转储
 
+
+	start_sound();
 	while (1) {
 		sleep(1);
 	}
 
 #else
+
 
 	if (daemon(1, 1) == -1) {
 		exit(-1);
@@ -48,6 +56,7 @@ int main(int argc, char **argv) {
 	start_serial();//开启串口
 	start_record();//开启记录
 	start_dump();//开启转储
+	start_sound(); //开启录音
 
 	pthread_exit(NULL);
 #endif

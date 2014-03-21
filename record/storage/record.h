@@ -24,7 +24,17 @@ struct record_header
 {
 	char tag[3];
 	char type;
-	int content_size;
+	union
+	{
+		struct
+		{
+			unsigned char serial_len;
+			char status;
+			unsigned short lattery;
+		};
+		int wave_size;
+	};
+
 	char year;
 	char month;
 	char day;
@@ -34,6 +44,8 @@ struct record_header
 	unsigned short millsec;
 
 }__attribute__((packed));
+
+
 
 
 struct record

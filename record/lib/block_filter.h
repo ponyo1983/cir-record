@@ -36,6 +36,6 @@ struct block_filter {
 struct block_filter * create_block_filter(int block_size, int block_num);
 struct block *get_block(struct block_filter* filter, int timeout,
 		enum block_status status);
-void put_block(struct block_filter* filter, struct block *pblock,
+void put_block(struct block *pblock,
 		enum block_status status);
 #endif /* BLOCK_FILTER_H_ */

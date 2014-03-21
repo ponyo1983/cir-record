@@ -30,8 +30,7 @@
 
 #define GAP_SIZE	(256*1024) //必须大于RECORD_DATA_SIZE
 
-const char SERIAL_TAG[3] = "SER";
-
+const char SECTION_TAG[][3] = { "STS", "SER", "WAV" };
 static struct record_manager* gpmanager = NULL;
 
 static void get_partition_info(int * blk_size, int *blk_num) {
@@ -80,7 +79,8 @@ static int init_storage(struct record_manager *manager) {
 
 }
 
-void request_serial_data(struct record_manager*manager, char *data, int length) {
+void request_data(struct record_manager*manager, int section, char *data,
+		int length) {
 
 	struct block_filter * filter = manager->manager.fliters;
 
@@ -88,19 +88,43 @@ void request_serial_data(struct record_manager*manager, char *data, int length) 
 	struct record * precord;
 	if (pblock != NULL) {
 		precord = (struct record*) pblock->data;
-		precord->header.type = (char) RECORD_DUMP_SERIAL;
+		precord->header.type = ((char) RECORD_DUMP_STATUS) + section;
 		precord->header.tag[0] = 'D';
 		precord->header.tag[1] = 'M';
 		precord->header.tag[2] = 'P';
-		precord->header.content_size = length;
+		precord->header.serial_len = length;
 
 		//memset(precord->data, 0, RECORD_DATA_SIZE);
 		bcopy(data, precord->data, length);
 
 		pblock->data_length = sizeof(struct record);
-		put_block(filter, pblock, BLOCK_FULL);
+		put_block(pblock, BLOCK_FULL);
 	} else {
-		printf("request_serial_data err\n");
+		printf("request_data err\n");
+	}
+}
+
+void store_wave_data(struct record_manager * manager, struct block *wave_block) {
+
+	struct record * precord;
+	struct block_filter * filter = manager->manager.fliters;
+	if (filter == NULL)
+		return;
+	struct block *pblock = get_block(filter, 0, BLOCK_EMPTY);
+	if (pblock != NULL) {
+		precord = (struct record*) pblock->data;
+		precord->header.type = (char) RECORD_WAVE;
+		precord->header.tag[0] = SECTION_TAG[2][0];
+		precord->header.tag[1] = SECTION_TAG[2][1];
+		precord->header.tag[2] = SECTION_TAG[2][2];
+		precord->header.wave_size = pblock->data_length;
+
+		precord->wave_data = wave_block;
+
+		put_block(pblock, BLOCK_FULL);
+
+	} else {
+		//printf("store_serial_data err\n");
 	}
 }
 
@@ -117,10 +141,10 @@ void store_serial_data(struct record_manager * manager, char *data, int length) 
 	if (pblock != NULL) {
 		precord = (struct record*) pblock->data;
 		precord->header.type = (char) RECORD_SERIAL;
-		precord->header.tag[0] = SERIAL_TAG[0];
-		precord->header.tag[1] = SERIAL_TAG[1];
-		precord->header.tag[2] = SERIAL_TAG[2];
-		precord->header.content_size = length;
+		precord->header.tag[0] = SECTION_TAG[1][0];
+		precord->header.tag[1] = SECTION_TAG[1][1];
+		precord->header.tag[2] = SECTION_TAG[1][2];
+		precord->header.serial_len = length;
 
 		/* 获得日期时间，并转化为 struct tm。 */
 		gettimeofday(&tv, NULL);
@@ -137,7 +161,7 @@ void store_serial_data(struct record_manager * manager, char *data, int length) 
 		memset(precord->data, 0, RECORD_DATA_SIZE);
 		bcopy(data, precord->data, length);
 
-		put_block(filter, pblock, BLOCK_FULL);
+		put_block(pblock, BLOCK_FULL);
 	} else {
 		//printf("store_serial_data err\n");
 	}
@@ -154,13 +178,7 @@ static void store_date_table(struct record_manager *manager, int index) {
 	if (index < 0 || index > 2)
 		return;
 
-	if (index == 0) {
-		offset = manager->dics[0].stat_date_offset;
-	} else if (index == 1) {
-		offset = manager->dics[0].serl_date_offset;
-	} else {
-		offset = manager->dics[0].wav_date_offset;
-	}
+	offset = manager->dics[0].sections[index].date_offset;
 	fseek(manager->file, offset, SEEK_SET);
 	fwrite(data, 512, 1, manager->file);
 	fflush(manager->file);
@@ -178,16 +196,9 @@ static void store_dictionary(struct record_manager *manager) {
 	fflush(manager->file);
 }
 
-static void flush_status_data(struct record_manager *manager) {
-}
+static void flush_data(struct record_manager *manager, int section,
+		char *data_buffer, int size) {
 
-static void flush_serial_data(struct record_manager *manager) {
-
-	struct record_dic* dic = manager->dics;
-	int size = manager->serial_length;
-	if (size <= 0)
-		return;
-	light_on(2);
 	//对日期的处理
 	int date_changed = 0;
 	int index = 0;
@@ -196,40 +207,61 @@ static void flush_serial_data(struct record_manager *manager) {
 	int cur_date = 0;
 	int date_pos = 0;
 	int date_val = 0;
-	if (manager->dics[0].serl_date_size > 0) {
-		date_pos = (manager->dics[0].serl_date_next_off
-				+ manager->dics[0].serl_date_total - 8)
-				% (manager->dics[0].serl_date_total);
-		cur_date = manager->date_tbl[1][date_pos / 4];
+	int i;
+	int align_size = 16; //对齐尺寸
+	if (section == 2) {
+		align_size = 512; //wav数据是512字节对齐
+	}
+	struct record_dic* dic = manager->dics;
+	if (size <= 0)
+		return;
+	if (section < 0 || section > 2)
+		return;
+
+	light_on(2);
+
+	size = (size + (align_size - 1)) / align_size * align_size;
+
+	if (manager->dics[0].sections[section].date_size > 0) {
+		date_pos = (manager->dics[0].sections[section].date_next_off
+				+ manager->dics[0].sections[section].date_total - 8)
+				% (manager->dics[0].sections[section].date_total);
+		cur_date = manager->date_tbl[section][date_pos / 4];
 	}
 	while (index < size) {
-		record = (struct record*) (manager->serial_buffer + index);
+		record = (struct record*) (data_buffer + index);
 
-		if (strncmp(record->header.tag, SERIAL_TAG, 3) != 0) {
+		if (strncmp(record->header.tag, SECTION_TAG[section], 3) != 0) {
 			break;
 		}
-		if (record->header.type != 1) {
+		if (record->header.type != section) {
 			break;
 		}
 
 		date_val = (record->header.year) | ((record->header.month) << 8)
 				| ((record->header.day) << 16);
-		record_size = (record->header.content_size + 16 + (16 - 1)) / 16 * 16;
-
+		record_size = (record->header.serial_len + 16 + (align_size - 1))
+				/ align_size * align_size;
+		if (section == 2) //波形文件数据长度为4个字节
+				{
+			record_size = (record->header.wave_size + 16 + (align_size - 1))
+					/ align_size * align_size;
+		}
 		if (date_val != cur_date) {
 
 			date_changed = 1;
 
-			date_pos = manager->dics[0].serl_date_next_off;
-			manager->date_tbl[1][date_pos / 4] = date_val;
-			manager->date_tbl[1][date_pos / 4 + 1] =
-					(manager->dics[0].serl_next_off + index)
-							% (manager->dics[0].serl_total); //偏移量
-			manager->dics[0].serl_date_next_off =
-					(manager->dics[0].serl_date_next_off + 8)
-							% (manager->dics[0].serl_date_total);
-			manager->dics[0].serl_date_size = (manager->dics[0].serl_date_size
-					+ 8) % (manager->dics[0].serl_date_total);
+			date_pos = manager->dics[0].sections[section].date_next_off;
+			manager->date_tbl[section][date_pos / 4] = date_val;
+			manager->date_tbl[section][date_pos / 4 + 1] =
+					(manager->dics[0].sections[section].next_off + index)
+							% (manager->dics[0].sections[section].total); //偏移量
+			manager->dics[0].sections[section].date_next_off =
+					(manager->dics[0].sections[section].date_next_off + 8)
+							% (manager->dics[0].sections[section].date_total);
+			manager->dics[0].sections[section].date_size =
+					(manager->dics[0].sections[section].date_size + 8)
+							% (manager->dics[0].sections[section].date_total);
 
 		}
 		cur_date = date_val;
@@ -237,41 +269,80 @@ static void flush_serial_data(struct record_manager *manager) {
 
 	}
 	if (date_changed) {
-		store_date_table(manager, 1);
+		store_date_table(manager, section);
 	}
-
-	int blank_size = dic->serl_total - dic->serl_next_off;
+	if(section==2) //波形数据，记录最后5条的位置
+	{
+		for(i=3;i>=0;i--)
+		{
+			dic->last_wav[i+1]=dic->last_wav[i];
+		}
+		dic->last_wav[0]=dic->sections[section].next_off;
+	}
+	int blank_size = dic->sections[section].total
+			- dic->sections[section].next_off;
 	int size1 = size < blank_size ? size : blank_size;
 	int size2 = size - size1;
-	if (dic->serl_total - dic->serl_size > GAP_SIZE) {
+	if (dic->sections[section].total - dic->sections[section].size > GAP_SIZE) {
 
 		if (size1 > 0) {
-			fseek(manager->file, dic->serl_offset + dic->serl_next_off,
-			SEEK_SET);
-			fwrite(manager->serial_buffer, 1, size1, manager->file);
+			fseek(manager->file,
+					dic->sections[section].offset
+							+ dic->sections[section].next_off,
+					SEEK_SET);
+			fwrite(data_buffer, 1, size1, manager->file);
 		}
 		if (size2 > 0) {
 			fseek(manager->file, 0,
 			SEEK_SET);
-			fwrite(manager->serial_buffer + size1, 1, size2, manager->file);
-			dic->serl_next_off = size2;
+			fwrite(data_buffer + size1, 1, size2, manager->file);
+			dic->sections[section].next_off = size2;
 		} else {
-			dic->serl_next_off = dic->serl_next_off + size;
+			dic->sections[section].next_off = dic->sections[section].next_off
+					+ size;
 		}
-		dic->serl_size = dic->serl_size + size;
+		dic->sections[section].size = dic->sections[section].size + size;
 	} else {
 		//first create a gap eare
 
 	}
-	manager->serial_length = 0;
+	if (section == 1) {
+		manager->serial_length = 0;
+	}
 	store_dictionary(manager);
+
+}
+
+static void flush_status_data(struct record_manager *manager) {
+}
+
+static void flush_wave_data(struct record_manager *manager, char *wav_buffer,
+		int size) {
+
+	flush_data(manager, 2, wav_buffer, size);
+}
+
+static void flush_serial_data(struct record_manager *manager) {
+
+	flush_data(manager, 1, manager->serial_buffer, manager->serial_length);
+
+}
+
+static void process_wave_data(struct record_manager *manager,
+		struct record * record) {
+
+	struct block * pblock = (struct block *) (record->wave_data);
+	if (pblock != NULL) {
+		flush_wave_data(manager, pblock->data, pblock->data_length);
+		put_block(pblock, BLOCK_EMPTY);
+	}
 
 }
 
 static void process_serial_data(struct record_manager *manager,
 		struct record * record) {
 	int size = 0;
-	size = (record->header.content_size + (16 - 1)) / 16 * 16 + 16; //16字节对齐
+	size = (record->header.serial_len + (16 - 1)) / 16 * 16 + 16; //16字节对齐
 	if (manager->serial_length + size > SERIAL_BUFFER_SIZE) {
 		//保存串口数据数据
 		flush_serial_data(manager);
@@ -281,20 +352,20 @@ static void process_serial_data(struct record_manager *manager,
 	manager->serial_length = manager->serial_length + size;
 }
 
-static void dump_serial_data(struct record_manager *manager,
-		struct record * record) {
+static void dump_data(struct record_manager *manager, struct record * record,
+		int section) {
 	static char dump_buffer[DUMP_SIZE]; //
 	int i;
 	int size, offset, rd_size;
 	struct dump_manager *pdump_manager = NULL;
 	pdump_manager = (struct dump_manager*) record->data;
-	flush_serial_data(manager);
-
-	send_dump(pdump_manager, (int) DUMP_SERIAL_ACK, 0, dump_buffer, 16);
+	if (section == 1) {
+		flush_serial_data(manager);
+	}
+	//printf("dum start\n");
+	send_dump(pdump_manager, section * 3, 0, dump_buffer, 16); //应答
 
 	usleep(100000);
-
-
 
 	if (pdump_manager->acordding_time) //根据日期存储
 	{
@@ -302,40 +373,65 @@ static void dump_serial_data(struct record_manager *manager,
 	} else {
 
 	}
-	size = manager->dics[0].serl_size;
-	offset = manager->dics[0].serl_offset
-			+ (manager->dics[0].serl_next_off + manager->dics[0].serl_total
-					- manager->dics[0].serl_size)
-					% (manager->dics[0].serl_total);
+	size = manager->dics[0].sections[section].size;
+	offset = manager->dics[0].sections[section].offset
+			+ (manager->dics[0].sections[section].next_off
+					+ manager->dics[0].sections[section].total
+					- manager->dics[0].sections[section].size)
+					% (manager->dics[0].sections[section].total);
 
 	fseek(manager->file, offset, SEEK_SET);
-	i=0;
+	i = 0;
 	while (size > 0) {
 		rd_size = size > DUMP_SIZE ? DUMP_SIZE : size;
 		fread(dump_buffer, rd_size, 1, manager->file);
-		send_dump(pdump_manager, (int) DUMP_SERIAL_DATA, i, dump_buffer,
-				rd_size);
+		send_dump(pdump_manager, section * 3 + 1, i, dump_buffer, rd_size);
 		size -= rd_size;
 		i++;
 
 	}
-	send_dump(pdump_manager, (int) DUMP_SERIAL_FINISHED, 0, dump_buffer,
-		DUMP_SIZE);
+	send_dump(pdump_manager, section * 3 + 2, 0, dump_buffer, 1);
 
 }
 
+static void dump_status_data(struct record_manager *manager,
+		struct record * record) {
+
+	dump_data(manager, record, 0);
+}
+static void dump_serial_data(struct record_manager *manager,
+		struct record * record) {
+
+	dump_data(manager, record, 1);
+}
+static void dump_wave_data(struct record_manager *manager,
+		struct record * record) {
+
+	dump_data(manager, record, 2);
+}
 static void process_record(struct record_manager *manager,
 		struct record * record) {
 
 	switch (record->header.type) {
-	case 0:
+	case (char) RECORD_STATUS:
 		break;
-	case (char) RECORD_SERIAL:
-
+	case (char) RECORD_SERIAL: //开始存储串口数据
 		process_serial_data(manager, record);
+		break;
+	case (char) RECORD_WAVE: //开始处理录音数据
+		process_wave_data(manager, record);
+		break;
+	case (char) RECORD_DUMP_STATUS:
+		dump_status_data(manager, record);
 		break;
 	case (char) RECORD_DUMP_SERIAL: //开始转储串口数据
 		dump_serial_data(manager, record);
+		break;
+	case (char) RECORD_DUMP_WAVE: //开始转储串口数据
+		dump_wave_data(manager, record);
+		break;
+	default:
+		//printf("record type:%d\n",record->header.type);
 		break;
 
 	}
@@ -356,7 +452,7 @@ static void * store_proc(void *args) {
 			record = (struct record*) pblock->data;
 			process_record(manager, record);
 
-			put_block(filter, pblock, BLOCK_EMPTY);
+			put_block(pblock, BLOCK_EMPTY);
 		} else {
 			flush_status_data(manager);
 			flush_serial_data(manager);
@@ -372,7 +468,7 @@ struct record_manager* get_record_manager() {
 		gpmanager = malloc(sizeof(struct record_manager));
 
 		if (gpmanager != NULL) {
-			memset(gpmanager,0,sizeof(struct record_manager));
+			memset(gpmanager, 0, sizeof(struct record_manager));
 			add_block_filter(&(gpmanager->manager), NULL, sizeof(struct record),
 					20);
 			gpmanager->file = NULL;

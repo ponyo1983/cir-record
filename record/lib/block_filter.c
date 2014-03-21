@@ -36,6 +36,7 @@ struct block_filter * create_block_filter(int block_size, int block_num) {
 
 	memset(filter, 0, sizeof(struct block_filter));
 	memset(blocks, 0, block_num * sizeof(struct block));
+	filter->block_data=data;
 	filter->block_size = block_size;
 	filter->block_num = block_num;
 	filter->blosk_list = blocks;
@@ -48,6 +49,7 @@ struct block_filter * create_block_filter(int block_size, int block_num) {
 	pthread_mutex_init(&(filter->mutex_empt), NULL);
 
 	for (i = 0; i < block_num; i++) {
+		blocks[i].filter=filter;
 		blocks[i].block_no = i;
 		blocks[i].block_size = block_size;
 		blocks[i].data = data + i * block_size;
@@ -136,14 +138,13 @@ struct block *get_block(struct block_filter* filter, int timeout,
 	return pblock;
 }
 
-void put_block(struct block_filter* filter, struct block *pblock,
-		enum block_status status) {
+void put_block(struct block *pblock,enum block_status status) {
 
 	struct block** pblock_head = NULL;
 	pthread_cond_t * cond = NULL;
 	pthread_mutex_t *mutex = NULL;
 
-
+	struct block_filter* filter=pblock->filter;
 	if (status == BLOCK_EMPTY) {
 		pblock_head = &(filter->empty_list);
 		mutex = &(filter->mutex_empt);

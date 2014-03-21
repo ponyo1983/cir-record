@@ -42,7 +42,7 @@ static int led_mode = (int)LED_NORMAL;
 static void change_light_force(int no,char state, int force) {
 	struct led* pled = led_list;
 	char buffer[4];
-	if((led_mode==(int)LED_DUMP) && (force==0)) return;
+	if((led_mode!=(int)LED_NORMAL) && (force==0)) return;
 	while (pled != NULL) {
 		if (pled->led_no == no) {
 
@@ -71,6 +71,10 @@ void change_led_mode (enum led_mode mode)
 	{
 		change_light_force(0,'0',1);
 		change_light_force(1,'0',1);
+		change_light_force(2,'0',1);
+	}
+	else if(mode==LED_DUMP_FINISHED)
+	{
 		change_light_force(2,'0',1);
 	}
 }
@@ -111,11 +115,15 @@ static void * led_proc(void *args) {
 				}
 				pled = pled->next;
 			}
-		} else if (led_mode == 1) {
+		} else if (led_mode == (int)LED_DUMP) {
 			usleep(DUMP_MS * 1000);
 			change_light_force(2,'1',1);
 			usleep(DUMP_MS * 1000);
 			change_light_force(2,'0',1);
+		}
+		else
+		{
+			usleep(100000);
 		}
 
 	}

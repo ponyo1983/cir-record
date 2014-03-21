@@ -16,6 +16,8 @@
 
 #include "../lib/block_manager.h"
 
+#include "../lib/block_filter.h"
+
 #define SERIAL_BUFFER_SIZE	(1024)
 
 struct record_manager
@@ -33,6 +35,7 @@ struct record_manager
 
 
 struct record_manager* get_record_manager();
-void request_serial_data(struct record_manager*manager,char *data,int length);
+void request_data(struct record_manager*manager,int section,char *data,int length);
 void store_serial_data(struct record_manager * manager, char *data, int length);
+void store_wave_data(struct record_manager * manager,struct block *pblock);
 #endif /* STORAGE_MANAGER_H_ */

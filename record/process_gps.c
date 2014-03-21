@@ -32,7 +32,7 @@ static void * proc_gps(void *args) {
 		pblock = get_block(filter, 5000, BLOCK_FULL);
 		if (pblock != NULL) {
 			light_on(1);
-			put_block(filter,pblock,BLOCK_EMPTY);
+			put_block(pblock,BLOCK_EMPTY);
 		}
 		else
 		{ //超时

@@ -112,11 +112,23 @@ static void * get_extern_device() {
 	return device_name;
 }
 
+static void wait_usb_plugout(struct dump_manager *manager) {
+	char *device = NULL;
+
+	while (1) {
+
+		device = get_extern_device();
+		if (device == NULL)
+			break;
+		sleep(1);
+	}
+}
+
 static void wait_usb_plugin(struct dump_manager *manager) {
 	char *device = NULL;
 
 	while (1) {
-		sleep(1);
+
 		device = get_extern_device();
 		if (device == NULL) {
 			memset(manager->device_name, 0, 50);
@@ -133,13 +145,14 @@ static void wait_usb_plugin(struct dump_manager *manager) {
 		if (manager->device_exit_time == 3) {
 			break;
 		}
+		sleep(1);
 	}
 }
 
 static int mount_usb(struct dump_manager *manager) {
 	char * device = manager->device_name;
 	//返回0。失败返回-1
-	int ret = mount(device, MOUNT_POINT, "vfat", 0,NULL);
+	int ret = mount(device, MOUNT_POINT, "vfat", 0, NULL);
 	return ret;
 }
 
@@ -185,10 +198,8 @@ static int get_config_info(struct dump_manager *manager) {
 	}
 	return 0;
 }
-void dump_status_data(struct dump_manager *manager) {
 
-}
-void dump_serial_data(struct dump_manager *manager) {
+static void dump_data(struct dump_manager *manager, int section) {
 	char buffer[512];
 	FILE * file = NULL;
 	struct dump* pdump = NULL;
@@ -197,23 +208,36 @@ void dump_serial_data(struct dump_manager *manager) {
 	int ack = 0;
 	struct record_manager * record_manager = get_record_manager();
 	struct block_filter * filter = manager->manager.fliters;
-	sprintf(buffer, "%s/%s-Serial.dat", MOUNT_POINT, manager->ID);
+	if (section < 0 || section > 2)
+		return;
+
+	switch (section) {
+	case 0:
+		sprintf(buffer, "%s/%s-Menu.dat", MOUNT_POINT, manager->ID);
+		break;
+	case 1:
+		sprintf(buffer, "%s/%s-Serial.dat", MOUNT_POINT, manager->ID);
+		break;
+	case 2:
+		sprintf(buffer, "%s/%s-Wave.dat", MOUNT_POINT, manager->ID);
+		break;
+	}
 
 	for (i = 0; i < 3; i++) { //尝试3次
-		request_serial_data(record_manager, (char*) manager,
+		request_data(record_manager, section, (char*) manager,
 				sizeof(struct dump_manager));
 		pblock = get_block(filter, 1000, BLOCK_FULL);
 		if (pblock != NULL) {
 			pdump = (struct dump*) pblock->data;
-			if (pdump->type == (char) DUMP_SERIAL_ACK) {
+			if (pdump->type == section * 3) {
 				ack = 1;
-				put_block(filter, pblock, BLOCK_EMPTY);
+				put_block(pblock, BLOCK_EMPTY);
 				printf("ack OK!\n");
 				break;
 			} else {
 				printf("ack type%d!\n", (char) pdump->type);
 			}
-			put_block(filter, pblock, BLOCK_EMPTY);
+			put_block(pblock, BLOCK_EMPTY);
 		} else {
 			printf("ack err%d!\n", i);
 		}
@@ -232,25 +256,31 @@ void dump_serial_data(struct dump_manager *manager) {
 		pblock = get_block(filter, 1000, BLOCK_FULL);
 		if (pblock != NULL) {
 			pdump = (struct dump*) pblock->data;
-			if (pdump->type == (char) DUMP_SERIAL_FINISHED) {
-				put_block(filter, pblock, BLOCK_EMPTY);
+			if (pdump->type == (section * 3 + 2)) { //finished
+				put_block(pblock, BLOCK_EMPTY);
 				break;
-			} else if (pdump->type == (char) DUMP_SERIAL_DATA) {
+			} else if (pdump->type == (section * 3 + 1)) {
 
 				fwrite(pdump->data, pdump->length, 1, file);
 				fflush(file);
 			}
-			put_block(filter, pblock, BLOCK_EMPTY);
+			put_block(pblock, BLOCK_EMPTY);
 		} else {
 			//printf("dump is null\n");
 		}
 	}
 
 	fclose(file);
-	printf("dump finished\n");
-}
-void dump_wave_data(struct dump_manager *manager) {
 
+}
+static void dump_status(struct dump_manager *manager) {
+	dump_data(manager, 0);
+}
+static void dump_serial(struct dump_manager *manager) {
+	dump_data(manager, 1);
+}
+static void dump_wave(struct dump_manager *manager) {
+	dump_data(manager, 2);
 }
 
 void * dump_proc(void * args) {
@@ -264,12 +294,15 @@ void * dump_proc(void * args) {
 			change_led_mode(LED_DUMP);
 			get_config_info(manager);
 
-			dump_status_data(manager);
-			dump_serial_data(manager);
-			dump_wave_data(manager);
+			dump_status(manager);
+			dump_serial(manager);
+			dump_wave(manager);
 
 			unmount_usb();
+
 			printf("dump OK!\n");
+			change_led_mode(LED_DUMP_FINISHED);
+			wait_usb_plugout(manager);
 			change_led_mode(LED_NORMAL);
 		}
 
@@ -328,7 +361,7 @@ void send_dump(struct dump_manager *manager, int type, int num, char *data,
 		dump->length = length;
 		dump->data_num = num;
 		memcpy(dump->data, data, length);
-		put_block(filter, pblock, BLOCK_FULL);
+		put_block(pblock, BLOCK_FULL);
 	} else {
 		printf("send_dump err\n");
 	}

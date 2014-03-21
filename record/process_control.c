@@ -26,7 +26,7 @@
 
 pthread_t thread_control;
 
-const char version[16] = "V3.0.0 14/03/11";
+const char version[16] = "3.0.0 14/03/11 ;";
 
 
 
@@ -109,7 +109,7 @@ static void * proc_control(void *args) {
 					break;
 				}
 			}
-			put_block(filter, pblock, BLOCK_EMPTY);
+			put_block(pblock, BLOCK_EMPTY);
 		} else {
 			//printf("no data\n");
 		}

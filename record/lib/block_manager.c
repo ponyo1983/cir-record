@@ -29,7 +29,7 @@ void add_block_data(struct block_manager * manager, char *data, int length,
 
 			memcpy(pblock->data, data, length);
 			pblock->data_length = length;
-			put_block(filter, pblock, BLOCK_FULL);
+			put_block(pblock, BLOCK_FULL);
 		} else {
 			printf("get block err\n");
 		}

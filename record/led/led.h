@@ -13,6 +13,7 @@ enum led_mode
 {
 	LED_NORMAL=0,
 	LED_DUMP=1,
+	LED_DUMP_FINISHED=2,
 };
 
 struct led
@@ -25,6 +26,7 @@ struct led
 };
 
 
+void init_led();
 void light_on(int no);
 void change_led_mode (enum led_mode mode);
 
