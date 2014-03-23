@@ -22,6 +22,7 @@
 #include "../lib/block_filter.h"
 
 #include "../led/led.h"
+#include "../config/config.h"
 
 #ifdef __x86_64
 const char NAME_PREFIX[] = "sdb"; //模拟机
@@ -30,8 +31,7 @@ const char NAME_PREFIX[]="sda"; //实际ARM开发板
 #endif
 
 const char MOUNT_POINT[] = "/mnt";
-const char RECORD_ID[] = "123456";
-const char ID_FILE[] = "/ID";
+
 
 const char KEY_BEGINTIME[] = "BeginTime=";
 const char KEY_ENDTIME[] = "EndTime=";
@@ -49,7 +49,7 @@ static void * get_extern_device() {
 	int next_space;
 	int segment_index = 0;
 	int major = 0;
-	int minor = 0;
+	//int minor = 0;
 
 	memset(name, 0, sizeof(name));
 	FILE* file = fopen("/proc/partitions", "r");
@@ -62,7 +62,7 @@ static void * get_extern_device() {
 		if (length <= 5)
 			continue;
 		major = 0;
-		minor = 0;
+		//minor = 0;
 		segment_index = 0;
 		for (i = 0; i < length; i++) {
 			if (isspace(buffer[i]))
@@ -80,7 +80,7 @@ static void * get_extern_device() {
 				major = atoi(buffer + i);
 				break;
 			case 1:
-				minor = atoi(buffer + i);
+				//minor = atoi(buffer + i);
 				break;
 			case 2:
 				//#block num
@@ -312,18 +312,8 @@ void * dump_proc(void * args) {
 }
 
 static void get_record_id(struct dump_manager *manager) {
-	memcpy(manager->ID, RECORD_ID, sizeof(RECORD_ID));
-	FILE *file = fopen(ID_FILE, "r");
-	int i;
-	if (file != NULL) {
-		fgets(manager->ID, 50, file);
-		for (i = 0; i < 50; i++) {
-			if ((manager->ID[i] == '\n') || (manager->ID[i] == '\r')) {
-				manager->ID[i] = 0;
-			}
-		}
-		fclose(file);
-	}
+	char *id=get_id();
+	memcpy(manager->ID,id,16);
 }
 
 struct dump_manager* get_dump_manager() {

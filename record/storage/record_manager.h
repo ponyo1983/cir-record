@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <pthread.h>
 
-
 #include "record_dic.h"
 
 #include "../lib/block_manager.h"
@@ -20,8 +19,7 @@
 
 #define SERIAL_BUFFER_SIZE	(1024)
 
-struct record_manager
-{
+struct record_manager {
 	struct block_manager manager;
 	struct record_dic dics[2];
 	int date_tbl[4][128];
@@ -33,9 +31,11 @@ struct record_manager
 
 };
 
-
 struct record_manager* get_record_manager();
-void request_data(struct record_manager*manager,int section,char *data,int length);
+void request_playback(struct record_manager*manager, int play_index,
+		struct block*wav_block);
+void request_data(struct record_manager*manager, int section, char *data,
+		int length);
 void store_serial_data(struct record_manager * manager, char *data, int length);
-void store_wave_data(struct record_manager * manager,struct block *pblock);
+void store_wave_data(struct record_manager * manager, struct block *pblock);
 #endif /* STORAGE_MANAGER_H_ */

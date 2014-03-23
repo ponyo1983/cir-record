@@ -20,6 +20,7 @@
 
 #include "led/led.h"
 #include "sound/sound.h"
+#include "config/config.h"
 
 extern void start_serial();
 extern void start_record();
@@ -29,14 +30,12 @@ int main(int argc, char **argv) {
 
 #ifdef __x86_64
 
-
-
+	load_config();
 	init_led();
 
 	start_serial(); //开启串口
 	start_record(); //开启记录
 	start_dump(); //开启转储
-
 
 	start_sound();
 	while (1) {
@@ -45,18 +44,18 @@ int main(int argc, char **argv) {
 
 #else
 
-
 	if (daemon(1, 1) == -1) {
 		exit(-1);
 		perror("daemon error\r\n");
 	}
 	chdir(dirname(argv[0])); //change current dir to application dir
 
+	load_config();
 	init_led();
 	start_serial();//开启串口
 	start_record();//开启记录
 	start_dump();//开启转储
-	start_sound(); //开启录音
+	start_sound();//开启录音
 
 	pthread_exit(NULL);
 #endif

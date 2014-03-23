@@ -33,6 +33,8 @@ struct sound
 	u_char *audiobuf;
 	int chunk_size;
 	int bits_per_frame;
+	int request_port;
+
 };
 
 
@@ -43,7 +45,7 @@ void start_capture();
 void stop_capture();
 
 
-void start_play();
+void start_play(int port);
 void stop_play();
 
 

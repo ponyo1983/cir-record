@@ -79,6 +79,27 @@ static int init_storage(struct record_manager *manager) {
 
 }
 
+void request_playback(struct record_manager*manager, int play_index,
+		struct block*wav_block) {
+	struct block_filter * filter = manager->manager.fliters;
+
+	struct block * pblock = get_block(filter, 0, BLOCK_EMPTY);
+	struct record * precord;
+	if (pblock != NULL) {
+		precord = (struct record*) pblock->data;
+		precord->header.type = (char) RECORD_PLAYBACK;
+		precord->header.tag[0] = 'P';
+		precord->header.tag[1] = 'L';
+		precord->header.tag[2] = 'Y';
+		precord->header.serial_len = play_index;
+		precord->wave_data = wav_block;
+
+		put_block(pblock, BLOCK_FULL);
+	} else {
+		printf("request_data err\n");
+	}
+}
+
 void request_data(struct record_manager*manager, int section, char *data,
 		int length) {
 
@@ -271,13 +292,12 @@ static void flush_data(struct record_manager *manager, int section,
 	if (date_changed) {
 		store_date_table(manager, section);
 	}
-	if(section==2) //波形数据，记录最后5条的位置
-	{
-		for(i=3;i>=0;i--)
-		{
-			dic->last_wav[i+1]=dic->last_wav[i];
+	if (section == 2) //波形数据，记录最后5条的位置
+			{
+		for (i = 3; i >= 0; i--) {
+			dic->last_wav[i + 1] = dic->last_wav[i];
 		}
-		dic->last_wav[0]=dic->sections[section].next_off;
+		dic->last_wav[0] = dic->sections[section].next_off;
 	}
 	int blank_size = dic->sections[section].total
 			- dic->sections[section].next_off;
@@ -409,6 +429,55 @@ static void dump_wave_data(struct record_manager *manager,
 
 	dump_data(manager, record, 2);
 }
+
+static void process_playback(struct record_manager *manager,
+		struct record * record) {
+
+
+	int index=record->header.serial_len;
+	struct block *wav_block=(struct block*)record->wave_data;
+	if(index>=0 && index <=4)
+	{
+
+
+		unsigned int offset=manager->dics[0].sections[2].offset+ manager->dics[0].last_wav[index];
+		int total_size=manager->dics[0].sections[2].total;
+		char * data=wav_block->data;
+		struct record_header *header=(struct record_header*)wav_block->data;
+		fseek(manager->file,offset,SEEK_SET);
+		fread(data,16,1,manager->file);
+
+		if(strncmp(header->tag,"WAV",3)==0 && (header->type==2))
+		{
+			printf("wav lengt:%d\n",header->wave_size);
+			int cpsize=header->wave_size-16;
+
+			if(cpsize>wav_block->block_size-16)
+			{
+				cpsize=wav_block->block_size-16;
+			}
+			int size1=(total_size-offset+16)>cpsize?cpsize:total_size-offset+16;
+			if(size1>0)
+			{
+				fread(data+16,size1,1,manager->file);
+			}
+			if(size1<cpsize)
+			{
+				fseek(manager->file,manager->dics[0].sections[2].offset,SEEK_SET);
+				fread(data+16+size1,cpsize-size1,1,manager->file);
+			}
+		}
+	}
+
+
+
+
+
+	put_block(wav_block,BLOCK_FULL);
+
+
+}
+
 static void process_record(struct record_manager *manager,
 		struct record * record) {
 
@@ -429,6 +498,9 @@ static void process_record(struct record_manager *manager,
 		break;
 	case (char) RECORD_DUMP_WAVE: //开始转储串口数据
 		dump_wave_data(manager, record);
+		break;
+	case (char) RECORD_PLAYBACK: //开始回放数据
+		process_playback(manager, record);
 		break;
 	default:
 		//printf("record type:%d\n",record->header.type);

@@ -21,12 +21,13 @@
 #include "lib/block_manager.h"
 
 #include "./led/led.h"
+#include "./sound/sound.h"
 
 #include "global.h"
 
 pthread_t thread_control;
 
-const char version[16] = "3.0.0 14/03/11 ;";
+const char version[16] = "V3.0.0 14/03/11;";
 
 
 
@@ -73,6 +74,17 @@ static void * proc_control(void *args) {
 
 					switch (cmd) {
 					case (char) 0x33: //播放控制
+						{
+							if(pframe->data[10]==(char)0xff)
+							{
+								start_play(src_addr);
+							}
+							else if(pframe->data[10]==0)
+							{
+								printf("stop play\n");
+								stop_play();
+							}
+						}
 						break;
 					case (char) 0xfa: //问询测试
 						break;
