@@ -28,7 +28,7 @@ struct record_dic {
 		unsigned int last1_pos;
 		char r1[8];
 	} sections[3];
-	unsigned int last_wav[5]; //最近5条的录音记录
+	int last_wav[5]; //最近5条的录音记录
 	char reserved[512 - 64 * 4 - 20 - 2];
 	unsigned short crc;
 

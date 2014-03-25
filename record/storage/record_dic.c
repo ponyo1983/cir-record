@@ -70,7 +70,11 @@ void init_record_dic(struct record_dic *dic, int sec_size, int sec_num) {
 	dic->sections[2].date_total=512;
 	dic->sections[2].offset = offset + STATS_STORE_SIZE+serial_size;
 	dic->sections[2].total=wav_size;
-
+	dic->last_wav[0]=-1;
+	dic->last_wav[1]=-1;
+	dic->last_wav[2]=-1;
+	dic->last_wav[3]=-1;
+	dic->last_wav[4]=-1;
 	dic->crc=compute_crc16(dic, 510);
 
 }

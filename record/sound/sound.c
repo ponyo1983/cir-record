@@ -27,6 +27,8 @@
 
 #include "../global.h"
 
+#include "g726.h"
+
 #define DEFAULT_FORMAT		SND_PCM_FORMAT_A_LAW
 #define DEFAULT_SPEED 		8000
 #define SOUND_NAME	("default")
@@ -39,9 +41,8 @@ const char* selem_name[2] = { "Master", "Capture" };
 #else
 #define INPUT_NAME	("/dev/input/event0")
 #define KEY_CODE	(257)
-const char* selem_name[2] = { "Digital", "Line Input" };
+const char* selem_name[2] = {"Digital", "Line Input"};
 #endif
-
 
 static struct sound* pgsound = NULL;
 
@@ -60,7 +61,7 @@ void stop_capture() {
 void start_play(int port) {
 	if (pgsound != NULL) {
 		pgsound->state = SOUND_PLAY;
-		pgsound->request_port=port;
+		pgsound->request_port = port;
 	}
 }
 
@@ -69,9 +70,6 @@ void stop_play() {
 		pgsound->state = SOUND_IDLE;
 	}
 }
-
-
-
 
 /*
  * The parameter volume is to be given in the range [0, 100]
@@ -102,8 +100,6 @@ void set_volume(long volume, int dir) {
 
 	snd_mixer_close(handle);
 }
-
-
 
 static ssize_t pcm_read(struct sound* psound, u_char *data, size_t rcount) {
 	ssize_t r;
@@ -237,7 +233,8 @@ static void playback(struct sound* psound, u_char *wav_buffer, int length) {
 	int chunk_size = psound->chunk_size;
 
 	while ((written < length) && (psound->state == SOUND_PLAY)) {
-		if(snd_pcm_writei(psound->handle, wav_buffer + written, chunk_size)<=0)
+		if (snd_pcm_writei(psound->handle, wav_buffer + written, chunk_size)
+				<= 0)
 			break;
 		written += chunk_size;
 	}
@@ -246,12 +243,17 @@ static void playback(struct sound* psound, u_char *wav_buffer, int length) {
 
 }
 
+/*
+ * 按照G726 rate=2 G726_encode()函数的格式要求存储数据
+ */
 void capture_loop(struct sound*psound) {
 
 	int chunk_size = psound->chunk_size;
 	u_char *audiobuf = psound->audiobuf;
 	struct block * pblock = NULL;
 	int length = 0;
+	int i;
+	short *g762_in;
 	struct record_manager * record_manager = get_record_manager();
 	while (1) {
 
@@ -271,19 +273,24 @@ void capture_loop(struct sound*psound) {
 			break;
 		} else {
 			if (pblock != NULL) {
-				memcpy(pblock->data + length, audiobuf, chunk_size);
-				length += chunk_size;
-				pblock->data_length = pblock->data_length + chunk_size;
+				//memcpy(pblock->data + length, audiobuf, chunk_size);
+				g762_in = (short *) (pblock->data + length);
+				for (i = 0; i < chunk_size; i++) {
+					g762_in[i] = audiobuf[i];
+
+				}
+				length += chunk_size * 2;
+				pblock->data_length = pblock->data_length + chunk_size * 2;
 				if (psound->state != SOUND_CAPTURE) {
 					printf("store:%d\n", length);
-					set_wave_block_length(pblock, length - 16);
+					set_wave_block_length(pblock, (length - 16) / 8); //g726压缩
 					store_wave_data(record_manager, pblock);
 					pblock = NULL;
 					break;
 				}
-				if (length + chunk_size + 512 > pblock->block_size) { //为对齐需要，留有512空余
-					set_wave_block_length(pblock, length - 16);
-					store_wave_data(record_manager, pblock);
+				if (length + chunk_size * 2 + 512 > pblock->block_size) { //为对齐需要，留有512空余
+					set_wave_block_length(pblock, (length - 16) / 8);
+					store_wave_data(record_manager, pblock); ////g726压缩
 					pblock = NULL;
 					printf("OK:%d\n", length);
 				}
@@ -298,51 +305,84 @@ void capture_loop(struct sound*psound) {
 static void play(struct sound * psound) {
 
 	struct record_manager* record_manager = get_record_manager();
-	int i;
+	int i, sound_num;
 	struct block * pblock;
 	struct block * bkblock;
+	struct block *tmpblock = NULL;
 	int err;
+	struct record_header * header;
 	int open_mode = 0;
-	char buffer[3]={0,0,0};
-	err = snd_pcm_open(&(psound->handle), SOUND_NAME, SND_PCM_STREAM_PLAYBACK,
-			open_mode);
-	if (err < 0)
-		return;
-	set_params(psound);
-	err = snd_pcm_prepare(psound->handle);
-	if (err >= 0) {
+	char buffer[3] = { 0, 0, 0 };
+	short * g726_buffer;
+	G726_state state;
 
-		for (i = 0; i < 5; i++) {
-			if(psound->state!=SOUND_PLAY) break;
-			pblock = get_block(psound->manager.fliters, 0, BLOCK_EMPTY);
-			if (pblock != NULL) {
-				request_playback(record_manager, i, pblock);
+	for (sound_num = 0; sound_num < 5; sound_num++) {
+		printf("play num:%d\n", sound_num);
+		if (psound->state != SOUND_PLAY)
+			break;
 
-				bkblock = get_block(psound->manager.fliters, 5000, BLOCK_FULL);
-				if (bkblock != NULL) {
-					printf("start play\n");
+		pblock = get_block(psound->manager.fliters, 0, BLOCK_EMPTY);
+		if (pblock != NULL) {
+			request_playback(record_manager, sound_num, pblock);
 
-					struct record_header * header =
-							(struct record_header*) bkblock->data;
-					//snd_pcm_writei(psound->handle, ((char*)bkblock->data)+16, (header->wave_size-16));
-					playback(psound, ((u_char*) bkblock->data) + 16,
-							(header->wave_size - 16));
-					put_block(bkblock, BLOCK_EMPTY);
-				} else {
-					put_block(pblock, BLOCK_EMPTY);
+			bkblock = get_block(psound->manager.fliters, 5000, BLOCK_FULL);
+			if (bkblock != NULL) {
+
+				header = (struct record_header*) bkblock->data;
+				printf("start play wave size:%d\n", header->wave_size);
+				if (header->wave_size > 0) {
+					tmpblock = get_block(psound->manager.fliters, 0,
+							BLOCK_EMPTY);
+					if (tmpblock != NULL) {
+
+						g726_buffer = (short*) tmpblock->data;
+
+						for (i = 0; i < header->wave_size; i++) {
+							g726_buffer[i * 4] = (bkblock->data[16 + i] >> 0)
+									& 0x03;
+							g726_buffer[i * 4 + 1] =
+									(bkblock->data[16 + i] >> 2) & 0x03;
+							g726_buffer[i * 4 + 2] =
+									(bkblock->data[16 + i] >> 4) & 0x03;
+							g726_buffer[i * 4 + 3] =
+									(bkblock->data[16 + i] >> 6) & 0x03;
+						}
+						G726_decode(g726_buffer, (short*) (bkblock->data + 16),
+								header->wave_size * 4, "1", 2, 0, &state);
+						g726_buffer = (short*) (bkblock->data + 16);
+						for (i = 0; i < header->wave_size * 4; i++) {
+							bkblock->data[16 + i] = (u_char) ((g726_buffer[i]
+									& 0xff));
+						}
+
+						err = snd_pcm_open(&(psound->handle), SOUND_NAME,
+								SND_PCM_STREAM_PLAYBACK, open_mode);
+						if (err < 0)
+							break;
+						set_params(psound);
+						err = snd_pcm_prepare(psound->handle);
+						if(err<0) break;
+						playback(psound, bkblock->data + 16,
+								header->wave_size * 4);
+						put_block(tmpblock, BLOCK_EMPTY);
+						snd_pcm_close(psound->handle);
+					}
 				}
 
+				put_block(bkblock, BLOCK_EMPTY);
+			} else {
+				put_block(pblock, BLOCK_EMPTY);
+
 			}
+
 		}
-		if(i==4) //播放完毕
-		{
-			struct frame_manager *manager_control = get_frame_manager(CONTROL_MANAGER);
-			send_frame(manager_control, RECORD_ADDRESS, psound->request_port, 1,
-											(char) 0x92, buffer, 3);
-		}
+
 	}
 
-	snd_pcm_close(psound->handle);
+	struct frame_manager *manager_control = get_frame_manager(CONTROL_MANAGER);
+	send_frame(manager_control, RECORD_ADDRESS, psound->request_port, 1,
+			(char) 0x92, buffer, 3);
+
 }
 static void captue(struct sound * psound) {
 	int err;
@@ -371,10 +411,10 @@ static void update_state(struct sound * psound) {
 
 void * sound_proc(void * args) {
 	struct sound * psound = (struct sound*) args;
-	int vol=get_playback_volume();
-	set_volume(vol,0);
-	vol=get_capture_volume();
-	set_volume(vol,1);
+	int vol = get_playback_volume();
+	set_volume(vol, 0);
+	vol = get_capture_volume();
+	set_volume(vol, 1);
 	while (1) {
 		usleep(100000);
 		update_state(psound);

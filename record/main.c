@@ -30,6 +30,7 @@ int main(int argc, char **argv) {
 
 #ifdef __x86_64
 
+
 	load_config();
 	init_led();
 

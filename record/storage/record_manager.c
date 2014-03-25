@@ -26,6 +26,8 @@
 #include "../lib/block_filter.h"
 #include "../led/led.h"
 
+#include "../sound/g726.h"
+
 #define PARTITION_NAME	("/dev/mmcblk0p3")
 
 #define GAP_SIZE	(256*1024) //必须大于RECORD_DATA_SIZE
@@ -336,7 +338,7 @@ static void flush_data(struct record_manager *manager, int section,
 static void flush_status_data(struct record_manager *manager) {
 }
 
-static void flush_wave_data(struct record_manager *manager, char *wav_buffer,
+static void flush_wave_data(struct record_manager *manager, unsigned char *wav_buffer,
 		int size) {
 
 	flush_data(manager, 2, wav_buffer, size);
@@ -352,8 +354,29 @@ static void process_wave_data(struct record_manager *manager,
 		struct record * record) {
 
 	struct block * pblock = (struct block *) (record->wave_data);
+	struct block * tmpBlock=NULL;
+	int length;
+	G726_state state;
+	int i;
+	short *buffer;
 	if (pblock != NULL) {
-		flush_wave_data(manager, pblock->data, pblock->data_length);
+
+		//开始压缩 G.726 rate=2
+		tmpBlock=get_block(pblock->filter,0,BLOCK_EMPTY);
+		if(tmpBlock!=NULL)
+		{
+			length=(pblock->data_length-16)/2;
+			buffer=(short*)tmpBlock->data;
+			G726_encode((short*)(pblock->data+16),buffer,length,"1",2,0,&state);
+			length=length/4;
+			for(i=0;i<length;i++)
+			{
+				pblock->data[16+i]=buffer[i*4]|(buffer[i*4+1]<<2)|(buffer[i*4+2]<<4) |(buffer[i*4+3]<<6);
+			}
+			flush_wave_data(manager, pblock->data, length+16);
+			put_block(tmpBlock, BLOCK_EMPTY);
+		}
+
 		put_block(pblock, BLOCK_EMPTY);
 	}
 
@@ -436,14 +459,16 @@ static void process_playback(struct record_manager *manager,
 
 	int index=record->header.serial_len;
 	struct block *wav_block=(struct block*)record->wave_data;
-	if(index>=0 && index <=4)
+	struct record_header *header=(struct record_header*)wav_block->data;
+	header->wave_size=0;
+	if(index>=0 && index <=4 && (manager->dics[0].last_wav[index]>=0))
 	{
 
 
 		unsigned int offset=manager->dics[0].sections[2].offset+ manager->dics[0].last_wav[index];
 		int total_size=manager->dics[0].sections[2].total;
-		char * data=wav_block->data;
-		struct record_header *header=(struct record_header*)wav_block->data;
+		u_char * data=wav_block->data;
+
 		fseek(manager->file,offset,SEEK_SET);
 		fread(data,16,1,manager->file);
 
@@ -466,6 +491,10 @@ static void process_playback(struct record_manager *manager,
 				fseek(manager->file,manager->dics[0].sections[2].offset,SEEK_SET);
 				fread(data+16+size1,cpsize-size1,1,manager->file);
 			}
+		}
+		else
+		{
+			header->wave_size=0;
 		}
 	}
 

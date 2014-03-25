@@ -17,7 +17,7 @@ struct block
 	int block_no; //block 编号
 	int block_size;
 	int data_length;
-	void * data;
+	unsigned char * data;
 };
 
 void init_wave_block(struct block *pblock);
