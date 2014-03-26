@@ -10,9 +10,10 @@
 #include <stdlib.h>
 
 static char record_id[16] = "PGV5";
-static int volume_playback=95;
-static int volume_capture=95;
+static int volume_playback=84;
+static int volume_capture=84;
 
+static float play_rate=3;
 
 static void str_cpy(char *src,char *dst,int length)
 {
@@ -41,15 +42,10 @@ void load_config() {
 				str_cpy(buffer+3,record_id,16);
 
 			}
-			else if(strncmp(buffer,"PlayVol=",8)==0)
+			else if(strncmp(buffer,"PlayRate=",9)==0)
 			{
-				str_cpy(buffer+8,value,16);
-				volume_playback=atoi(value);
-			}
-			else if(strncmp(buffer,"CaptureVol=",11)==0)
-			{
-				str_cpy(buffer+11,value,16);
-				volume_capture=atoi(value);
+				str_cpy(buffer+9,value,16);
+				play_rate=atoi(value);
 			}
 
 		}
@@ -69,4 +65,9 @@ int get_playback_volume()
 int get_capture_volume()
 {
 	return volume_capture;
+}
+
+float get_play_rate()
+{
+	return play_rate;
 }

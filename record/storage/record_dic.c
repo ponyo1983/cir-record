@@ -46,11 +46,11 @@ int record_dic_valid(struct record_dic *dic) {
 
 void init_record_dic(struct record_dic *dic, int sec_size, int sec_num) {
 
-	int total_size = (sec_size * sec_num - 10 * SIZE_1M);
+	long total_size = (sec_size * sec_num - 10 * SIZE_1M);
 
-	int serial_size = (total_size / 3) / SIZE_1M * SIZE_1M; //alignment 1M byte
-	int wav_size = (total_size - serial_size) / SIZE_1M * SIZE_1M; //alignment 1M byte
-	int offset=512*6;
+	long serial_size = (total_size / 3) / SIZE_1M * SIZE_1M; //alignment 1M byte
+	long wav_size = (total_size - serial_size) / SIZE_1M * SIZE_1M; //alignment 1M byte
+	long offset=512*6;
 	memset(dic, 0, 512);
 	strcpy(dic->tag, tag);
 	dic->sec_size = sec_size;

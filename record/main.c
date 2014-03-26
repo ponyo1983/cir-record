@@ -31,6 +31,9 @@ int main(int argc, char **argv) {
 #ifdef __x86_64
 
 
+
+	printf("size:%d\n",sizeof(struct record_dic));
+
 	load_config();
 	init_led();
 
@@ -50,6 +53,8 @@ int main(int argc, char **argv) {
 		perror("daemon error\r\n");
 	}
 	chdir(dirname(argv[0])); //change current dir to application dir
+
+	printf("size:%d\n",sizeof(struct record_dic));
 
 	load_config();
 	init_led();

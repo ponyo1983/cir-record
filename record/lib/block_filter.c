@@ -20,7 +20,7 @@
 struct block_filter * create_block_filter(int block_size, int block_num) {
 	struct block_filter * filter = NULL;
 	struct block * blocks = NULL;
-	char *data = NULL;
+	u_char *data = NULL;
 	int i;
 
 	filter = malloc(sizeof(struct block_filter));

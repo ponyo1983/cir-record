@@ -220,7 +220,7 @@ static void store_dictionary(struct record_manager *manager) {
 }
 
 static void flush_data(struct record_manager *manager, int section,
-		char *data_buffer, int size) {
+		u_char *data_buffer, int size) {
 
 	//对日期的处理
 	int date_changed = 0;
@@ -301,10 +301,10 @@ static void flush_data(struct record_manager *manager, int section,
 		}
 		dic->last_wav[0] = dic->sections[section].next_off;
 	}
-	int blank_size = dic->sections[section].total
+	__int64_t blank_size = dic->sections[section].total
 			- dic->sections[section].next_off;
-	int size1 = size < blank_size ? size : blank_size;
-	int size2 = size - size1;
+	__int64_t size1 = size < blank_size ? size : blank_size;
+	__int64_t size2 = size - size1;
 	if (dic->sections[section].total - dic->sections[section].size > GAP_SIZE) {
 
 		if (size1 > 0) {
@@ -338,8 +338,8 @@ static void flush_data(struct record_manager *manager, int section,
 static void flush_status_data(struct record_manager *manager) {
 }
 
-static void flush_wave_data(struct record_manager *manager, unsigned char *wav_buffer,
-		int size) {
+static void flush_wave_data(struct record_manager *manager,
+		unsigned char *wav_buffer, int size) {
 
 	flush_data(manager, 2, wav_buffer, size);
 }
@@ -354,28 +354,12 @@ static void process_wave_data(struct record_manager *manager,
 		struct record * record) {
 
 	struct block * pblock = (struct block *) (record->wave_data);
-	struct block * tmpBlock=NULL;
-	int length;
-	G726_state state;
-	int i;
-	short *buffer;
+
+	int length=pblock->data_length;
+
 	if (pblock != NULL) {
 
-		//开始压缩 G.726 rate=2
-		tmpBlock=get_block(pblock->filter,0,BLOCK_EMPTY);
-		if(tmpBlock!=NULL)
-		{
-			length=(pblock->data_length-16)/2;
-			buffer=(short*)tmpBlock->data;
-			G726_encode((short*)(pblock->data+16),buffer,length,"1",2,0,&state);
-			length=length/4;
-			for(i=0;i<length;i++)
-			{
-				pblock->data[16+i]=buffer[i*4]|(buffer[i*4+1]<<2)|(buffer[i*4+2]<<4) |(buffer[i*4+3]<<6);
-			}
-			flush_wave_data(manager, pblock->data, length+16);
-			put_block(tmpBlock, BLOCK_EMPTY);
-		}
+		flush_wave_data(manager, pblock->data, length);
 
 		put_block(pblock, BLOCK_EMPTY);
 	}
@@ -456,54 +440,44 @@ static void dump_wave_data(struct record_manager *manager,
 static void process_playback(struct record_manager *manager,
 		struct record * record) {
 
+	int index = record->header.serial_len;
+	struct block *wav_block = (struct block*) record->wave_data;
+	struct record_header *header = (struct record_header*) wav_block->data;
+	header->wave_size = 0;
+	if (index >= 0 && index <= 4 && (manager->dics[0].last_wav[index] >= 0)) {
 
-	int index=record->header.serial_len;
-	struct block *wav_block=(struct block*)record->wave_data;
-	struct record_header *header=(struct record_header*)wav_block->data;
-	header->wave_size=0;
-	if(index>=0 && index <=4 && (manager->dics[0].last_wav[index]>=0))
-	{
+		__int64_t offset = manager->dics[0].sections[2].offset
+				+ manager->dics[0].last_wav[index];
+		__int64_t total_size = manager->dics[0].sections[2].total;
+		u_char * data = wav_block->data;
 
+		fseek(manager->file, offset, SEEK_SET);
+		fread(data, 16, 1, manager->file);
 
-		unsigned int offset=manager->dics[0].sections[2].offset+ manager->dics[0].last_wav[index];
-		int total_size=manager->dics[0].sections[2].total;
-		u_char * data=wav_block->data;
+		if (strncmp(header->tag, "WAV", 3) == 0 && (header->type == 2)) {
+			printf("wav lengt:%d\n", header->wave_size);
+			int cpsize = header->wave_size - 16;
 
-		fseek(manager->file,offset,SEEK_SET);
-		fread(data,16,1,manager->file);
-
-		if(strncmp(header->tag,"WAV",3)==0 && (header->type==2))
-		{
-			printf("wav lengt:%d\n",header->wave_size);
-			int cpsize=header->wave_size-16;
-
-			if(cpsize>wav_block->block_size-16)
-			{
-				cpsize=wav_block->block_size-16;
+			if (cpsize > wav_block->block_size - 16) {
+				cpsize = wav_block->block_size - 16;
 			}
-			int size1=(total_size-offset+16)>cpsize?cpsize:total_size-offset+16;
-			if(size1>0)
-			{
-				fread(data+16,size1,1,manager->file);
+			__int64_t size1 =
+					(total_size - offset + 16) > cpsize ?
+							cpsize : total_size - offset + 16;
+			if (size1 > 0) {
+				fread(data + 16, size1, 1, manager->file);
 			}
-			if(size1<cpsize)
-			{
-				fseek(manager->file,manager->dics[0].sections[2].offset,SEEK_SET);
-				fread(data+16+size1,cpsize-size1,1,manager->file);
+			if (size1 < cpsize) {
+				fseek(manager->file, manager->dics[0].sections[2].offset,
+				SEEK_SET);
+				fread(data + 16 + size1, cpsize - size1, 1, manager->file);
 			}
-		}
-		else
-		{
-			header->wave_size=0;
+		} else {
+			header->wave_size = 0;
 		}
 	}
 
-
-
-
-
-	put_block(wav_block,BLOCK_FULL);
-
+	put_block(wav_block, BLOCK_FULL);
 
 }
 

@@ -11,6 +11,8 @@
 #include <linux/input.h>
 #include <fcntl.h>
 
+#include <speex/speex.h>
+
 #include "sound.h"
 
 #include "../lib/block_manager.h"
@@ -29,12 +31,17 @@
 
 #include "g726.h"
 
-#define DEFAULT_FORMAT		SND_PCM_FORMAT_A_LAW
+#define DEFAULT_FORMAT		SND_PCM_FORMAT_S16_LE
 #define DEFAULT_SPEED 		8000
 #define SOUND_NAME	("default")
 
+#define FRAME_SIZE	(160)
+
+#define S16_MAX_VALUE	(32767)
+#define S16_MIN_VALUE	(-32768)
+
 #ifdef __x86_64
-#define INPUT_NAME	("/dev/input/event5")
+#define INPUT_NAME	("/dev/input/event7")
 #define KEY_CODE	KEY_ESC
 
 const char* selem_name[2] = { "Master", "Capture" };
@@ -106,7 +113,7 @@ static ssize_t pcm_read(struct sound* psound, u_char *data, size_t rcount) {
 	size_t result = 0;
 	size_t count = rcount;
 	snd_pcm_t * handle = psound->handle;
-	if (count != psound->chunk_size) {
+	if (count > psound->chunk_size) {
 		count = psound->chunk_size;
 	}
 
@@ -150,7 +157,7 @@ static void set_params(struct sound *psound) {
 	int bits_per_sample, bits_per_frame;
 	snd_pcm_uframes_t chunk_size = 0;
 	snd_pcm_t *handle = psound->handle;
-
+	int channels = 1;
 	snd_pcm_hw_params_alloca(&params);
 	snd_pcm_sw_params_alloca(&swparams);
 	err = snd_pcm_hw_params_any(handle, params);
@@ -161,10 +168,11 @@ static void set_params(struct sound *psound) {
 			SND_PCM_ACCESS_RW_INTERLEAVED);
 	if (err < 0)
 		return;
-	err = snd_pcm_hw_params_set_format(handle, params, SND_PCM_FORMAT_A_LAW);
+	err = snd_pcm_hw_params_set_format(handle, params, DEFAULT_FORMAT);
 	if (err < 0)
 		return;
-	err = snd_pcm_hw_params_set_channels(handle, params, 1);
+
+	err = snd_pcm_hw_params_set_channels(handle, params, channels);
 	if (err < 0)
 		return;
 
@@ -216,8 +224,8 @@ static void set_params(struct sound *psound) {
 		return;
 	}
 
-	bits_per_sample = snd_pcm_format_physical_width(SND_PCM_FORMAT_A_LAW);
-	bits_per_frame = bits_per_sample * 1;
+	bits_per_sample = snd_pcm_format_physical_width(DEFAULT_FORMAT);
+	bits_per_frame = bits_per_sample * channels;
 	psound->bits_per_frame = bits_per_frame;
 	int chunk_bytes = chunk_size * bits_per_frame / 8;
 	if (psound->audiobuf == NULL) {
@@ -227,17 +235,73 @@ static void set_params(struct sound *psound) {
 	//snd_pcm_sw_params_free(swparams);
 }
 
-static void playback(struct sound* psound, u_char *wav_buffer, int length) {
+static void playback_loop(struct sound* psound, u_char *wav_buffer, int length) {
 
-	int written = 0;
-	int chunk_size = psound->chunk_size;
+	int index = 0;
+	int i;
+	float tmp;
+	int frame_size;
+	float output[FRAME_SIZE];
+	short out[FRAME_SIZE];
+	int enhancement = 1;
+	/*Holds the state of the decoder*/
+	void *state;
+	/*Holds bits so they can be read and written to by the Speex routines*/
+	SpeexBits bits;
 
-	while ((written < length) && (psound->state == SOUND_PLAY)) {
-		if (snd_pcm_writei(psound->handle, wav_buffer + written, chunk_size)
-				<= 0)
-			break;
-		written += chunk_size;
+	float rate_vol=get_play_rate();
+	/*Create a new decoder state in narrowband mode*/
+	state = speex_decoder_init(&speex_nb_mode);
+
+	/*Set the perceptual enhancement on*/
+	speex_decoder_ctl(state, SPEEX_SET_ENH, &enhancement);
+
+	/*Initialization of the structure that holds the bits*/
+	speex_bits_init(&bits);
+
+	index=0;
+	while ((index < length) && (psound->state == SOUND_PLAY)) {
+
+		frame_size = wav_buffer[index]+(wav_buffer[index+1]<<8);
+		index += 2;
+		if(frame_size!=38)
+		{
+			printf("leng!=38\n");
+		}
+		if (frame_size < 256 ) {
+
+			/*Copy the data into the bit-stream struct*/
+			speex_bits_read_from(&bits, (char*)(wav_buffer + index), frame_size);
+
+			/*Decode the data*/
+			speex_decode(state, &bits, output);
+
+			/*Copy from float to short (16 bits) for output*/
+			for (i = 0; i < FRAME_SIZE; i++) {
+
+				tmp = output[i]*rate_vol; //在此更该放大倍数
+				if (tmp > S16_MAX_VALUE) {
+					out[i] = S16_MAX_VALUE;
+				} else if (tmp < S16_MIN_VALUE) {
+					out[i] = S16_MIN_VALUE;
+				} else {
+					out[i] = tmp;
+				}
+			}
+			if (snd_pcm_writei(psound->handle, out, FRAME_SIZE) <= 0)
+						break;
+
+			index+=frame_size;
+
+		} else {
+
+		}
 	}
+
+	/*Destroy the decoder state*/
+	speex_decoder_destroy(state);
+	/*Destroy the bit-stream truct*/
+	speex_bits_destroy(&bits);
 	//snd_pcm_nonblock(psound->handle, 0);
 	//snd_pcm_drain(psound->handle);
 
@@ -248,13 +312,31 @@ static void playback(struct sound* psound, u_char *wav_buffer, int length) {
  */
 void capture_loop(struct sound*psound) {
 
-	int chunk_size = psound->chunk_size;
-	u_char *audiobuf = psound->audiobuf;
+	short *audiobuf = (short*) psound->audiobuf;
+	int *enc_num;
 	struct block * pblock = NULL;
 	int length = 0;
 	int i;
-	short *g762_in;
+	char cbits[256];
+	int nbBytes;
 	struct record_manager * record_manager = get_record_manager();
+
+	float input[FRAME_SIZE];
+
+	int quality = 8;
+	/*Holds the state of the encoder*/
+	void *state;
+	/*Holds bits so they can be read and written to by the Speex routines*/
+	SpeexBits bits;
+
+	/*Create a new encoder state in narrowband mode*/
+	state = speex_encoder_init(&speex_nb_mode);
+
+	/*Set the quality to 8 (15 kbps)*/
+	speex_encoder_ctl(state, SPEEX_SET_QUALITY, &quality);
+	/*Initialization of the structure that holds the bits*/
+	speex_bits_init(&bits);
+
 	while (1) {
 
 		if (pblock == NULL) {
@@ -268,29 +350,44 @@ void capture_loop(struct sound*psound) {
 				break;
 			}
 		}
-		if (pcm_read(psound, audiobuf, chunk_size) != chunk_size) {
+		if (pcm_read(psound, (u_char*) audiobuf, FRAME_SIZE) != FRAME_SIZE) {
 			printf("capture err\n");
 			break;
 		} else {
 			if (pblock != NULL) {
-				//memcpy(pblock->data + length, audiobuf, chunk_size);
-				g762_in = (short *) (pblock->data + length);
-				for (i = 0; i < chunk_size; i++) {
-					g762_in[i] = audiobuf[i];
-
+				//开始Speex编码
+				for (i = 0; i < FRAME_SIZE; i++) {
+					input[i] = audiobuf[i];
 				}
-				length += chunk_size * 2;
-				pblock->data_length = pblock->data_length + chunk_size * 2;
+				/*Flush all the bits in the struct so we can encode a new frame*/
+				speex_bits_reset(&bits);
+
+				/*Encode the frame*/
+				speex_encode(state, input, &bits);
+				/*Copy the bits to an array of char that can be written*/
+				nbBytes = speex_bits_write(&bits, cbits, 256);
+
+				pblock->data[length]=(nbBytes&0xff);
+				pblock->data[length+1]=((nbBytes>>8)&0xff);
+				enc_num = (int*) (pblock->data + length);
+				*enc_num = nbBytes;
+
+				for (i = 0; i < nbBytes; i++) {
+					pblock->data[length + 2 + i] = cbits[i];
+				}
+
+				length += (2 + nbBytes);
+				pblock->data_length = pblock->data_length + 2 + nbBytes;
 				if (psound->state != SOUND_CAPTURE) {
 					printf("store:%d\n", length);
-					set_wave_block_length(pblock, (length - 16) / 8); //g726压缩
+					set_wave_block_length(pblock, length - 16);
 					store_wave_data(record_manager, pblock);
 					pblock = NULL;
 					break;
 				}
-				if (length + chunk_size * 2 + 512 > pblock->block_size) { //为对齐需要，留有512空余
-					set_wave_block_length(pblock, (length - 16) / 8);
-					store_wave_data(record_manager, pblock); ////g726压缩
+				if (length + FRAME_SIZE * 2 > pblock->block_size) {
+					set_wave_block_length(pblock, (length - 16));
+					store_wave_data(record_manager, pblock);
 					pblock = NULL;
 					printf("OK:%d\n", length);
 				}
@@ -300,21 +397,24 @@ void capture_loop(struct sound*psound) {
 		}
 
 	}
+
+	/*Destroy the encoder state*/
+	speex_encoder_destroy(state);
+	/*Destroy the bit-packing struct*/
+	speex_bits_destroy(&bits);
 }
 
-static void play(struct sound * psound) {
+static void playback(struct sound * psound) {
 
 	struct record_manager* record_manager = get_record_manager();
 	int i, sound_num;
 	struct block * pblock;
 	struct block * bkblock;
-	struct block *tmpblock = NULL;
+
 	int err;
 	struct record_header * header;
 	int open_mode = 0;
 	char buffer[3] = { 0, 0, 0 };
-	short * g726_buffer;
-	G726_state state;
 
 	for (sound_num = 0; sound_num < 5; sound_num++) {
 		printf("play num:%d\n", sound_num);
@@ -331,49 +431,25 @@ static void play(struct sound * psound) {
 				header = (struct record_header*) bkblock->data;
 				printf("start play wave size:%d\n", header->wave_size);
 				if (header->wave_size > 0) {
-					tmpblock = get_block(psound->manager.fliters, 0,
-							BLOCK_EMPTY);
-					if (tmpblock != NULL) {
 
-						g726_buffer = (short*) tmpblock->data;
+					err = snd_pcm_open(&(psound->handle), SOUND_NAME,
+							SND_PCM_STREAM_PLAYBACK, open_mode);
+					if (err < 0)
+						break;
+					set_params(psound);
+					err = snd_pcm_prepare(psound->handle);
+					if (err < 0)
+						break;
+					playback_loop(psound, bkblock->data + 16,
+							header->wave_size);
 
-						for (i = 0; i < header->wave_size; i++) {
-							g726_buffer[i * 4] = (bkblock->data[16 + i] >> 0)
-									& 0x03;
-							g726_buffer[i * 4 + 1] =
-									(bkblock->data[16 + i] >> 2) & 0x03;
-							g726_buffer[i * 4 + 2] =
-									(bkblock->data[16 + i] >> 4) & 0x03;
-							g726_buffer[i * 4 + 3] =
-									(bkblock->data[16 + i] >> 6) & 0x03;
-						}
-						G726_decode(g726_buffer, (short*) (bkblock->data + 16),
-								header->wave_size * 4, "1", 2, 0, &state);
-						g726_buffer = (short*) (bkblock->data + 16);
-						for (i = 0; i < header->wave_size * 4; i++) {
-							bkblock->data[16 + i] = (u_char) ((g726_buffer[i]
-									& 0xff));
-						}
-
-						err = snd_pcm_open(&(psound->handle), SOUND_NAME,
-								SND_PCM_STREAM_PLAYBACK, open_mode);
-						if (err < 0)
-							break;
-						set_params(psound);
-						err = snd_pcm_prepare(psound->handle);
-						if(err<0) break;
-						playback(psound, bkblock->data + 16,
-								header->wave_size * 4);
-						put_block(tmpblock, BLOCK_EMPTY);
-						snd_pcm_close(psound->handle);
-					}
+					snd_pcm_close(psound->handle);
 				}
-
-				put_block(bkblock, BLOCK_EMPTY);
-			} else {
-				put_block(pblock, BLOCK_EMPTY);
-
 			}
+
+			put_block(bkblock, BLOCK_EMPTY);
+		} else {
+			put_block(pblock, BLOCK_EMPTY);
 
 		}
 
@@ -423,7 +499,7 @@ void * sound_proc(void * args) {
 			psound->state = SOUND_IDLE;
 
 		} else if (psound->state == SOUND_PLAY) {
-			play(psound);
+			playback(psound);
 			psound->state = SOUND_IDLE;
 		}
 
